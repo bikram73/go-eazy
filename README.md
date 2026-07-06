@@ -132,5 +132,46 @@ User experience is the core of GoEazy. We've implemented several "Premium-Only" 
 - **v1.2**: Landlord Analytics update and Full SEO Branding.
 
 ---
+# Enginow Open Source Program
+
+Welcome to the Enginow Open Source Program!
+
+Our mission is to help students learn software development by contributing to real-world projects.
+
+Whether you're a beginner or an experienced developer, there's something for everyone.
+
+## What You'll Learn
+
+- React
+- Next.js
+- TypeScript
+- Node.js
+- MongoDB
+- APIs
+- Git & GitHub
+- UI/UX
+- Testing
+
+## Who Can Contribute?
+
+Everyone.
+
+Students
+Developers
+Designers
+Technical Writers
+
+## Getting Started
+
+1. Fork the repository
+2. Clone it
+3. Install dependencies
+4. Create a new branch
+5. Make changes
+6. Submit a Pull Request
+
+Happy Contributing ❤️
+
+--
 
 © 2026 GoEazy Platform. **Simplifying. Seamlessly.**
