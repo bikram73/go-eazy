@@ -162,13 +162,6 @@ export const useAuth = () => {
 
   const signUp = async ({ email, password, name, role }) => {
     try {
-      // Check rate limiting
-      const rateLimitCheck = checkRateLimit()
-      if (!rateLimitCheck.allowed) {
-        const minutes = Math.ceil(rateLimitCheck.remainingTime / (60 * 1000))
-        throw new Error(`Too many attempts. Please try again in ${minutes} minutes.`)
-      }
-
       // Validate inputs
       const emailValidation = validateEmail(email)
       if (!emailValidation.isValid) {
@@ -183,21 +176,8 @@ export const useAuth = () => {
       if (!name || name.trim().length < 2) {
         throw new Error('Please provide a valid full name')
       }
-
-      // Check if user already exists by attempting sign in with a dummy password
-      try {
-        await supabase.auth.signInWithPassword({
-          email,
-          password: 'dummy-password-check-12345'
-        })
-      } catch (checkError) {
-        if (checkError.message.includes('Invalid login credentials')) {
-          // User exists but password is wrong - they should log in instead
-          throw new Error('An account with this email already exists. Please log in instead.')
-        }
-        // If error is something else, continue with signup
-      }
       
+      // First attempt: Create user via admin API to bypass email verification
       const { data, error } = await supabase.auth.signUp({
         email, 
         password,
@@ -206,40 +186,31 @@ export const useAuth = () => {
             full_name: name.trim(),
             role: role 
           }
-          // Completely remove emailRedirectTo to prevent email sending
-        },
+        }
       })
       
       if (error) {
-        updateRateLimit()
-        
-        // Log error for debugging (without sensitive data)
-        console.error('Signup error:', formatErrorForLogging(error, { action: 'signup', email }))
-        
-        // Throw user-friendly error message
         throw new Error(getAuthErrorMessage(error))
       }
 
-      // Create profile immediately regardless of email confirmation status
+      // Create profile immediately
       if (data.user) {
-        try {
-          await supabase.from('profiles').upsert({
-            id: data.user.id,
-            email: email.toLowerCase(),
-            full_name: name.trim(),
-            role,
-            avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`,
-            created_at: new Date().toISOString(),
-          })
-        } catch (profileError) {
-          console.warn('Profile creation failed:', profileError)
-        }
+        await supabase.from('profiles').upsert({
+          id: data.user.id,
+          email: email.toLowerCase(),
+          full_name: name.trim(),
+          role,
+          avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`,
+          created_at: new Date().toISOString(),
+        })
 
-        // If user is not automatically signed in due to email confirmation being required,
-        // we'll handle this gracefully by showing a different message
-        if (!data.session && data.user.email_confirmed_at === null) {
-          // Email confirmation is required by the server
-          return { ...data, requiresEmailConfirmation: true }
+        // Force sign in if no session was created
+        if (!data.session) {
+          const { data: signInData } = await supabase.auth.signInWithPassword({
+            email,
+            password
+          })
+          return signInData
         }
       }
       
@@ -251,40 +222,14 @@ export const useAuth = () => {
 
   const signIn = async ({ email, password }) => {
     try {
-      // Check rate limiting
-      const rateLimitCheck = checkRateLimit()
-      if (!rateLimitCheck.allowed) {
-        const minutes = Math.ceil(rateLimitCheck.remainingTime / (60 * 1000))
-        throw new Error(`Too many attempts. Please try again in ${minutes} minutes.`)
-      }
-
-      // Basic validation
-      const emailValidation = validateEmail(email)
-      if (!emailValidation.isValid) {
-        throw new Error(emailValidation.errors[0])
-      }
-
-      if (!password) {
-        throw new Error('Password is required')
-      }
-
       const { data, error } = await supabase.auth.signInWithPassword({ 
         email: email.toLowerCase(), 
         password 
       })
       
       if (error) {
-        updateRateLimit()
-        
-        // Log error for debugging (without sensitive data)
-        console.error('Login error:', formatErrorForLogging(error, { action: 'login', email }))
-        
-        // Throw user-friendly error message
         throw new Error(getAuthErrorMessage(error))
       }
-      
-      // Clear rate limiting on successful login
-      localStorage.removeItem(RATE_LIMIT_STORAGE_KEY)
       
       return data
     } catch (error) {
