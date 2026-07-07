@@ -4,8 +4,9 @@ import { Mail, Lock, User, Eye, EyeOff, Home, GraduationCap, Utensils, CheckCirc
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { useAuth } from '../hooks/useAuth'
+import { ForgotPassword } from '../components/auth/ForgotPassword'
 import toast from 'react-hot-toast'
-import { AnimatePresence } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 
 const ROLE_OPTIONS = [
   { value: 'user',             label: 'Student / Professional', icon: <GraduationCap size={20} className="text-brand-500" />, desc: 'Find PGs, Hostels & Flats' },
@@ -15,9 +16,11 @@ const ROLE_OPTIONS = [
 
 export const AuthHome = () => {
   const navigate = useNavigate()
-  const { signIn, signUp, signInWithGoogle } = useAuth()
+  const { signIn, signUp, signInWithGoogle, resendVerification } = useAuth()
 
   const [tab, setTab] = useState('login')
+  const [view, setView] = useState('auth') // 'auth', 'forgot-password'
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [showPass, setShowPass] = useState(false)
@@ -45,16 +48,47 @@ export const AuthHome = () => {
         navigate('/search')
       } else {
         await signUp({ email: form.email, password: form.password, name: form.name, role: selectedRole })
-        toast.success('Account created!')
-        if (selectedRole === 'landlord') navigate('/landlord')
-        else if (selectedRole === 'service_provider') navigate('/service-provider')
-        else navigate('/search')
+        setPendingVerificationEmail(form.email)
+        toast.success('Account created! Please check your email to verify your account.')
+        setView('verification-sent')
       }
     } catch (err) {
-      toast.error(err.message || 'Something went wrong')
+      // Handle specific error messages
+      if (err.message.includes('already exists')) {
+        toast.error('An account with this email already exists. Please log in instead.')
+        setTab('login')
+      } else if (err.message.includes('No account found')) {
+        toast.error('No account found with this email. Please sign up first.')
+        setTab('signup')
+      } else if (err.message.includes('verify your email')) {
+        toast.error('Please verify your email before logging in.')
+        setPendingVerificationEmail(form.email)
+        setView('verification-reminder')
+      } else {
+        toast.error(err.message || 'Something went wrong')
+      }
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleResendVerification = async () => {
+    setLoading(true)
+    try {
+      await resendVerification(pendingVerificationEmail)
+      toast.success('Verification email sent!')
+    } catch (err) {
+      toast.error(err.message || 'Failed to send verification email')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const resetForm = () => {
+    setView('auth')
+    setForm({ name: '', email: '', password: '' })
+    setErrors({})
+    setPendingVerificationEmail('')
   }
 
   const handleGoogle = async () => {
@@ -126,131 +160,215 @@ export const AuthHome = () => {
           transition={{ duration: 0.5 }}
           className="w-full max-w-[480px] bg-white p-8 sm:p-10 rounded-[2.5rem] shadow-[0_24px_80px_rgba(0,0,0,0.06)] border border-gray-100"
         >
-          {/* Form Tabs */}
-          <div className="flex gap-2 p-1 bg-gray-100/80 rounded-2xl mb-10">
-            {['login', 'signup'].map(t => (
-              <button
-                key={t}
-                onClick={() => { setTab(t); setErrors({}) }}
-                className={`flex-1 py-3.5 rounded-xl text-sm font-bold transition-all ${
-                  tab === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:bg-white/50'
-                }`}
-              >
-                {t === 'login' ? 'Sign In' : 'Join Now'}
-              </button>
-            ))}
-          </div>
+          
+          {view === 'forgot-password' && (
+            <ForgotPassword onBack={() => setView('auth')} />
+          )}
 
-          <h2 className="text-3xl font-black text-gray-900 mb-2 tracking-tight">
-            {tab === 'login' ? 'Welcome Back!' : 'Create your journey'}
-          </h2>
-          <p className="text-gray-400 font-medium mb-8">
-            {tab === 'login' ? 'Continue with your credentials.' : 'Fill the details below to get started.'}
-          </p>
+          {view === 'verification-sent' && (
+            <div className="text-center space-y-4">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
+                <Mail className="w-8 h-8 text-green-600" />
+              </div>
+              <h3 className="text-2xl font-bold">Check your email</h3>
+              <p className="text-gray-600">
+                We've sent a verification link to <strong>{pendingVerificationEmail}</strong>
+              </p>
+              <p className="text-sm text-gray-500">
+                The link will expire in 1 hour. If you don't receive it, check your spam folder.
+              </p>
+              <div className="space-y-3 pt-4">
+                <Button
+                  onClick={handleResendVerification}
+                  loading={loading}
+                  variant="secondary"
+                  className="w-full"
+                >
+                  Resend Verification Email
+                </Button>
+                <Button
+                  onClick={resetForm}
+                  variant="ghost"
+                  className="w-full"
+                >
+                  Back to Login
+                </Button>
+              </div>
+            </div>
+          )}
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={tab}
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                transition={{ duration: 0.2 }}
-                className="space-y-4"
-              >
-                {tab === 'signup' && (
-                  <Input
-                    label="Full Name"
-                    placeholder="e.g. Priyanshu Negi"
-                    leftIcon={<User size={18} />}
-                    value={form.name}
-                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                    error={errors.name}
-                  />
-                )}
+          {view === 'verification-reminder' && (
+            <div className="text-center space-y-4">
+              <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto">
+                <Mail className="w-8 h-8 text-orange-600" />
+              </div>
+              <h3 className="text-2xl font-bold">Email Verification Required</h3>
+              <p className="text-gray-600">
+                Please verify your email address before logging in. Check your inbox at <strong>{pendingVerificationEmail}</strong>
+              </p>
+              <div className="space-y-3 pt-4">
+                <Button
+                  onClick={handleResendVerification}
+                  loading={loading}
+                  className="w-full"
+                >
+                  Resend Verification Email
+                </Button>
+                <Button
+                  onClick={resetForm}
+                  variant="secondary"
+                  className="w-full"
+                >
+                  Back to Login
+                </Button>
+              </div>
+            </div>
+          )}
 
-                <Input
-                  label="Email Address"
-                  type="email"
-                  placeholder="name@email.com"
-                  leftIcon={<Mail size={18} />}
-                  value={form.email}
-                  onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                  error={errors.email}
-                />
+          {view === 'auth' && (
+            <>
+              {/* Form Tabs */}
+              <div className="flex gap-2 p-1 bg-gray-100/80 rounded-2xl mb-10">
+                {['login', 'signup'].map(t => (
+                  <button
+                    key={t}
+                    onClick={() => { setTab(t); setErrors({}) }}
+                    className={`flex-1 py-3.5 rounded-xl text-sm font-bold transition-all ${
+                      tab === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:bg-white/50'
+                    }`}
+                  >
+                    {t === 'login' ? 'Sign In' : 'Join Now'}
+                  </button>
+                ))}
+              </div>
 
-                <Input
-                  label="Password"
-                  type={showPass ? 'text' : 'password'}
-                  placeholder="Min 8 characters"
-                  leftIcon={<Lock size={18} />}
-                  rightIcon={
-                    <button type="button" onClick={() => setShowPass(!showPass)}>
-                      {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
-                    </button>
-                  }
-                  value={form.password}
-                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                  error={errors.password}
-                />
+              <h2 className="text-3xl font-black text-gray-900 mb-2 tracking-tight">
+                {tab === 'login' ? 'Welcome Back!' : 'Create your journey'}
+              </h2>
+              <p className="text-gray-400 font-medium mb-8">
+                {tab === 'login' ? 'Continue with your credentials.' : 'Fill the details below to get started.'}
+              </p>
 
-                {tab === 'signup' && (
-                  <div className="pt-2">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Join GoEazy as</p>
-                    <div className="grid grid-cols-1 gap-3">
-                      {ROLE_OPTIONS.map(opt => (
-                        <button
-                          key={opt.value}
-                          type="button"
-                          onClick={() => setSelectedRole(opt.value)}
-                          className={`flex items-center gap-4 p-4 rounded-2xl border-2 text-left transition-all ${
-                            selectedRole === opt.value ? 'border-[#CA3433] bg-red-50/50' : 'border-gray-100 hover:border-gray-200'
-                          }`}
-                        >
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${selectedRole === opt.value ? 'bg-[#CA3433] text-white' : 'bg-gray-50 text-gray-400'}`}>
-                            {opt.icon}
-                          </div>
-                          <div>
-                            <h4 className="font-bold text-sm text-gray-900">{opt.label}</h4>
-                            <p className="text-[10px] text-gray-400 font-medium">{opt.desc}</p>
-                          </div>
-                        </button>
-                      ))}
+              <form onSubmit={handleSubmit} className="space-y-6">
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={tab}
+                    initial={{ opacity: 0, x: 10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -10 }}
+                    transition={{ duration: 0.2 }}
+                    className="space-y-4"
+                  >
+                    {tab === 'signup' && (
+                      <Input
+                        label="Full Name"
+                        placeholder="e.g. Priyanshu Negi"
+                        leftIcon={<User size={18} />}
+                        value={form.name}
+                        onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                        error={errors.name}
+                      />
+                    )}
+
+                    <Input
+                      label="Email Address"
+                      type="email"
+                      placeholder="name@email.com"
+                      leftIcon={<Mail size={18} />}
+                      value={form.email}
+                      onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                      error={errors.email}
+                    />
+
+                    <div className="space-y-2">
+                      <Input
+                        label="Password"
+                        type={showPass ? 'text' : 'password'}
+                        placeholder="Min 8 characters"
+                        leftIcon={<Lock size={18} />}
+                        rightIcon={
+                          <button type="button" onClick={() => setShowPass(!showPass)}>
+                            {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
+                          </button>
+                        }
+                        value={form.password}
+                        onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                        error={errors.password}
+                      />
+                      
+                      {/* Forgot Password Link */}
+                      {tab === 'login' && (
+                        <div className="text-right">
+                          <button
+                            type="button"
+                            onClick={() => setView('forgot-password')}
+                            className="text-sm text-[#CA3433] hover:text-red-600 font-medium"
+                          >
+                            Forgot password?
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                )}
-              </motion.div>
-            </AnimatePresence>
 
-            <Button type="submit" variant="primary" size="lg" className="w-full py-6 rounded-2xl bg-[#CA3433] shadow-xl shadow-red-500/20 text-lg group" loading={loading}>
-              <span className="flex items-center justify-center gap-2">
-                {tab === 'login' ? 'Sign In' : 'Create Account'}
-                <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
-              </span>
-            </Button>
-          </form>
+                    {tab === 'signup' && (
+                      <div className="pt-2">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Join GoEazy as</p>
+                        <div className="grid grid-cols-1 gap-3">
+                          {ROLE_OPTIONS.map(opt => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => setSelectedRole(opt.value)}
+                              className={`flex items-center gap-4 p-4 rounded-2xl border-2 text-left transition-all ${
+                                selectedRole === opt.value ? 'border-[#CA3433] bg-red-50/50' : 'border-gray-100 hover:border-gray-200'
+                              }`}
+                            >
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${selectedRole === opt.value ? 'bg-[#CA3433] text-white' : 'bg-gray-50 text-gray-400'}`}>
+                                {opt.icon}
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-sm text-gray-900">{opt.label}</h4>
+                                <p className="text-[10px] text-gray-400 font-medium">{opt.desc}</p>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
+                </AnimatePresence>
 
-          <div className="relative flex items-center gap-4 my-8">
-            <div className="flex-1 h-px bg-gray-100" />
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">or</span>
-            <div className="flex-1 h-px bg-gray-100" />
-          </div>
+                <Button type="submit" variant="primary" size="lg" className="w-full py-6 rounded-2xl bg-[#CA3433] shadow-xl shadow-red-500/20 text-lg group" loading={loading}>
+                  <span className="flex items-center justify-center gap-2">
+                    {tab === 'login' ? 'Sign In' : 'Create Account'}
+                    <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                  </span>
+                </Button>
+              </form>
 
-          <Button 
-            variant="secondary" 
-            size="lg" 
-            className="w-full py-4 rounded-2xl border-gray-100 hover:bg-gray-50 flex items-center justify-center gap-3 font-bold"
-            loading={googleLoading}
-            onClick={handleGoogle}
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24">
-              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-              <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.83z"/>
-              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.83c.87-2.6 3.3-4.52 6.16-4.52z"/>
-            </svg>
-            Continue with Google
-          </Button>
+              <div className="relative flex items-center gap-4 my-8">
+                <div className="flex-1 h-px bg-gray-100" />
+                <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">or</span>
+                <div className="flex-1 h-px bg-gray-100" />
+              </div>
+
+              <Button 
+                variant="secondary" 
+                size="lg" 
+                className="w-full py-4 rounded-2xl border-gray-100 hover:bg-gray-50 flex items-center justify-center gap-3 font-bold"
+                loading={googleLoading}
+                onClick={handleGoogle}
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                  <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.83z"/>
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.83c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                </svg>
+                Continue with Google
+              </Button>
+            </>
+          )}
         </motion.div>
       </div>
     </div>

@@ -113,34 +113,89 @@ export const useAuth = () => {
   }
 
   const signUp = async ({ email, password, name, role }) => {
-    const { data, error } = await supabase.auth.signUp({
-      email, password,
-      options: { 
-        data: { 
-          full_name: name,
-          role: role 
-        } 
-      },
-    })
-    if (error) throw error
-
-    if (data.user) {
-      await supabase.from('profiles').upsert({
-        id: data.user.id,
+    try {
+      // First check if user already exists
+      const { data: existingUser } = await supabase.auth.getUser()
+      
+      // Check if email is already registered by attempting to get user info
+      const { data: signInAttempt, error: signInError } = await supabase.auth.signInWithPassword({
         email,
-        full_name: name,
-        role,
-        avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`,
-        created_at: new Date().toISOString(),
+        password: 'dummy-password-check'
       })
+      
+      // If no error on email (but wrong password), user exists
+      if (signInError && signInError.message.includes('Invalid login credentials')) {
+        throw new Error('An account with this email already exists. Please log in instead.')
+      }
+      
+      const { data, error } = await supabase.auth.signUp({
+        email, password,
+        options: { 
+          data: { 
+            full_name: name,
+            role: role 
+          },
+          emailRedirectTo: `${window.location.origin}/auth-callback`
+        },
+      })
+      
+      if (error) {
+        if (error.message.includes('User already registered')) {
+          throw new Error('An account with this email already exists. Please log in instead.')
+        }
+        throw error
+      }
+
+      if (data.user && !data.user.email_confirmed_at) {
+        // User needs to verify email
+        await supabase.from('profiles').upsert({
+          id: data.user.id,
+          email,
+          full_name: name,
+          role,
+          avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`,
+          created_at: new Date().toISOString(),
+        })
+      }
+      
+      return data
+    } catch (error) {
+      throw error
     }
-    return data
   }
 
   const signIn = async ({ email, password }) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) throw error
-    return data
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+      
+      if (error) {
+        if (error.message.includes('Invalid login credentials') || error.message.includes('Email not confirmed')) {
+          // Check if user exists but email not verified
+          const { data: userData, error: userError } = await supabase.auth.signUp({
+            email,
+            password: 'dummy-check',
+            options: { emailRedirectTo: `${window.location.origin}/auth-callback` }
+          })
+          
+          if (userError && userError.message.includes('User already registered')) {
+            throw new Error('Please verify your email before logging in.')
+          } else if (userError && userError.message.includes('Invalid login credentials')) {
+            throw new Error('No account found with this email. Please sign up first.')
+          }
+        }
+        throw error
+      }
+      
+      // Check if email is verified
+      if (data.user && !data.user.email_confirmed_at) {
+        await supabase.auth.signOut()
+        throw new Error('Please verify your email before logging in.')
+      }
+      
+      return data
+    } catch (error) {
+      throw error
+    }
   }
 
   const signInWithGoogle = async () => {
@@ -167,6 +222,34 @@ export const useAuth = () => {
     dispatch(logout())
   }
 
+  const resetPassword = async (email) => {
+    const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`
+    })
+    if (error) throw error
+    return data
+  }
+
+  const updatePassword = async (newPassword) => {
+    const { data, error } = await supabase.auth.updateUser({
+      password: newPassword
+    })
+    if (error) throw error
+    return data
+  }
+
+  const resendVerification = async (email) => {
+    const { data, error } = await supabase.auth.resend({
+      type: 'signup',
+      email: email,
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth-callback`
+      }
+    })
+    if (error) throw error
+    return data
+  }
+
   const updateProfile = async (updates) => {
     const { data, error } = await supabase
       .from('profiles')
@@ -179,5 +262,20 @@ export const useAuth = () => {
     return data
   }
 
-  return { user, profile, role, loading, authModalOpen, authModalTab, signUp, signIn, signInWithGoogle, signOut, updateProfile }
+  return { 
+    user, 
+    profile, 
+    role, 
+    loading, 
+    authModalOpen, 
+    authModalTab, 
+    signUp, 
+    signIn, 
+    signInWithGoogle, 
+    signOut, 
+    resetPassword, 
+    updatePassword, 
+    resendVerification, 
+    updateProfile 
+  }
 }
