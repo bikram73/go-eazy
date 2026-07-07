@@ -1,10 +1,13 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Mail, Lock, User, Eye, EyeOff, Home, GraduationCap, Utensils, CheckCircle2, Sparkles, ArrowRight } from 'lucide-react'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
+import { PasswordStrengthIndicator } from '../components/ui/PasswordStrengthIndicator'
+import { EmailVerificationStatus } from '../components/auth/EmailVerificationStatus'
 import { useAuth } from '../hooks/useAuth'
 import { ForgotPassword } from '../components/auth/ForgotPassword'
+import { validateSignupForm, validateLoginForm } from '../utils/validation'
 import toast from 'react-hot-toast'
 import { AnimatePresence, motion } from 'framer-motion'
 
@@ -29,12 +32,20 @@ export const AuthHome = () => {
   const [errors, setErrors] = useState({})
 
   const validate = () => {
-    const e = {}
-    if (tab === 'signup' && !form.name.trim()) e.name = 'Name is required'
-    if (!form.email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) e.email = 'Valid email required'
-    if (form.password.length < 8) e.password = 'Min 8 characters'
-    setErrors(e)
-    return !Object.keys(e).length
+    if (tab === 'login') {
+      const validation = validateLoginForm({ email: form.email, password: form.password })
+      setErrors(validation.errors)
+      return validation.isValid
+    } else {
+      const validation = validateSignupForm({ 
+        name: form.name, 
+        email: form.email, 
+        password: form.password, 
+        role: selectedRole 
+      })
+      setErrors(validation.errors)
+      return validation.isValid
+    }
   }
 
   const handleSubmit = async (e) => {
@@ -67,18 +78,6 @@ export const AuthHome = () => {
       } else {
         toast.error(err.message || 'Something went wrong')
       }
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleResendVerification = async () => {
-    setLoading(true)
-    try {
-      await resendVerification(pendingVerificationEmail)
-      toast.success('Verification email sent!')
-    } catch (err) {
-      toast.error(err.message || 'Failed to send verification email')
     } finally {
       setLoading(false)
     }
@@ -166,63 +165,23 @@ export const AuthHome = () => {
           )}
 
           {view === 'verification-sent' && (
-            <div className="text-center space-y-4">
-              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-                <Mail className="w-8 h-8 text-green-600" />
-              </div>
-              <h3 className="text-2xl font-bold">Check your email</h3>
-              <p className="text-gray-600">
-                We've sent a verification link to <strong>{pendingVerificationEmail}</strong>
-              </p>
-              <p className="text-sm text-gray-500">
-                The link will expire in 1 hour. If you don't receive it, check your spam folder.
-              </p>
-              <div className="space-y-3 pt-4">
-                <Button
-                  onClick={handleResendVerification}
-                  loading={loading}
-                  variant="secondary"
-                  className="w-full"
-                >
-                  Resend Verification Email
-                </Button>
-                <Button
-                  onClick={resetForm}
-                  variant="ghost"
-                  className="w-full"
-                >
-                  Back to Login
-                </Button>
-              </div>
-            </div>
+            <EmailVerificationStatus
+              email={pendingVerificationEmail}
+              onResend={() => resendVerification(pendingVerificationEmail)}
+              onBack={resetForm}
+              type="signup"
+            />
           )}
 
           {view === 'verification-reminder' && (
-            <div className="text-center space-y-4">
-              <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto">
-                <Mail className="w-8 h-8 text-orange-600" />
-              </div>
-              <h3 className="text-2xl font-bold">Email Verification Required</h3>
-              <p className="text-gray-600">
-                Please verify your email address before logging in. Check your inbox at <strong>{pendingVerificationEmail}</strong>
-              </p>
-              <div className="space-y-3 pt-4">
-                <Button
-                  onClick={handleResendVerification}
-                  loading={loading}
-                  className="w-full"
-                >
-                  Resend Verification Email
-                </Button>
-                <Button
-                  onClick={resetForm}
-                  variant="secondary"
-                  className="w-full"
-                >
-                  Back to Login
-                </Button>
-              </div>
-            </div>
+            <EmailVerificationStatus
+              email={pendingVerificationEmail}
+              onResend={() => resendVerification(pendingVerificationEmail)}
+              onBack={resetForm}
+              type="signup"
+              title="Email Verification Required"
+              description={`Please verify your email address before logging in. We've sent a verification link to ${pendingVerificationEmail}.`}
+            />
           )}
 
           {view === 'auth' && (
@@ -295,6 +254,13 @@ export const AuthHome = () => {
                         onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
                         error={errors.password}
                       />
+                      
+                      {/* Password Strength Indicator for Signup */}
+                      {tab === 'signup' && form.password && (
+                        <div className="px-1">
+                          <PasswordStrengthIndicator password={form.password} showDetails={true} />
+                        </div>
+                      )}
                       
                       {/* Forgot Password Link */}
                       {tab === 'login' && (

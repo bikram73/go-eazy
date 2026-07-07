@@ -3,7 +3,9 @@ import { toast } from 'react-hot-toast'
 import { Mail, ArrowLeft } from 'lucide-react'
 import { Input } from '../ui/Input'
 import { Button } from '../ui/Button'
+import { EmailVerificationStatus } from './EmailVerificationStatus'
 import { useAuth } from '../../hooks/useAuth'
+import { validateEmail } from '../../utils/validation'
 
 export const ForgotPassword = ({ onBack }) => {
   const { resetPassword } = useAuth()
@@ -16,8 +18,10 @@ export const ForgotPassword = ({ onBack }) => {
     e.preventDefault()
     setError('')
     
-    if (!email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
-      setError('Please enter a valid email address')
+    // Validate email
+    const emailValidation = validateEmail(email)
+    if (!emailValidation.isValid) {
+      setError(emailValidation.errors[0])
       return
     }
     
@@ -36,25 +40,12 @@ export const ForgotPassword = ({ onBack }) => {
 
   if (sent) {
     return (
-      <div className="text-center space-y-4">
-        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-          <Mail className="w-8 h-8 text-green-600" />
-        </div>
-        <h3 className="text-lg font-semibold">Check your email</h3>
-        <p className="text-sm text-gray-600">
-          We've sent a password reset link to <strong>{email}</strong>
-        </p>
-        <p className="text-xs text-gray-500">
-          The link will expire in 1 hour. If you don't receive it, check your spam folder.
-        </p>
-        <Button
-          variant="secondary"
-          onClick={onBack}
-          className="w-full mt-4"
-        >
-          Back to Login
-        </Button>
-      </div>
+      <EmailVerificationStatus
+        email={email}
+        onResend={() => resetPassword(email)}
+        onBack={onBack}
+        type="password-reset"
+      />
     )
   }
 

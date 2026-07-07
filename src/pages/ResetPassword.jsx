@@ -4,7 +4,9 @@ import { toast } from 'react-hot-toast'
 import { Lock, Eye, EyeOff, CheckCircle } from 'lucide-react'
 import { Input } from '../components/ui/Input'
 import { Button } from '../components/ui/Button'
+import { PasswordStrengthIndicator } from '../components/ui/PasswordStrengthIndicator'
 import { useAuth } from '../hooks/useAuth'
+import { validatePassword } from '../utils/validation'
 
 export const ResetPassword = () => {
   const navigate = useNavigate()
@@ -33,11 +35,16 @@ export const ResetPassword = () => {
   const validate = () => {
     const newErrors = {}
     
-    if (password.length < 8) {
-      newErrors.password = 'Password must be at least 8 characters'
+    // Validate new password
+    const passwordValidation = validatePassword(password)
+    if (!passwordValidation.isValid) {
+      newErrors.password = passwordValidation.errors[0]
     }
     
-    if (password !== confirmPassword) {
+    // Check password confirmation
+    if (!confirmPassword) {
+      newErrors.confirmPassword = 'Please confirm your password'
+    } else if (password !== confirmPassword) {
       newErrors.confirmPassword = 'Passwords do not match'
     }
     
@@ -98,28 +105,37 @@ export const ResetPassword = () => {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <Input
-            type={showPassword ? 'text' : 'password'}
-            label="New Password"
-            placeholder="Enter new password"
-            value={password}
-            onChange={(e) => {
-              setPassword(e.target.value)
-              setErrors(prev => ({ ...prev, password: '' }))
-            }}
-            error={errors.password}
-            leftIcon={<Lock size={16} />}
-            rightIcon={
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            }
-            required
-          />
+          <div className="space-y-2">
+            <Input
+              type={showPassword ? 'text' : 'password'}
+              label="New Password"
+              placeholder="Enter new password"
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value)
+                setErrors(prev => ({ ...prev, password: '' }))
+              }}
+              error={errors.password}
+              leftIcon={<Lock size={16} />}
+              rightIcon={
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              }
+              required
+            />
+            
+            {/* Password Strength Indicator */}
+            {password && (
+              <div className="px-1">
+                <PasswordStrengthIndicator password={password} showDetails={true} />
+              </div>
+            )}
+          </div>
 
           <Input
             type={showConfirmPassword ? 'text' : 'password'}
@@ -143,11 +159,6 @@ export const ResetPassword = () => {
             }
             required
           />
-
-          <div className="text-xs text-gray-500 space-y-1">
-            <p>• Password must be at least 8 characters long</p>
-            <p>• Use a strong, unique password</p>
-          </div>
 
           <Button
             type="submit"

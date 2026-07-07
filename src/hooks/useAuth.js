@@ -2,6 +2,54 @@ import { useEffect } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { supabase } from '../lib/supabase'
 import { setUser, setProfile, logout, setLoading } from '../store/authSlice'
+import { validateEmail, validatePassword } from '../utils/validation'
+import { getAuthErrorMessage, formatErrorForLogging } from '../utils/authErrors'
+
+// Rate limiting for authentication attempts
+const RATE_LIMIT_STORAGE_KEY = 'auth_attempts'
+const MAX_ATTEMPTS = 5
+const RATE_LIMIT_WINDOW = 15 * 60 * 1000 // 15 minutes
+
+const getRateLimitInfo = () => {
+  try {
+    const stored = localStorage.getItem(RATE_LIMIT_STORAGE_KEY)
+    return stored ? JSON.parse(stored) : { attempts: 0, lastAttempt: 0 }
+  } catch {
+    return { attempts: 0, lastAttempt: 0 }
+  }
+}
+
+const updateRateLimit = () => {
+  const now = Date.now()
+  const info = getRateLimitInfo()
+  
+  // Reset if window has passed
+  if (now - info.lastAttempt > RATE_LIMIT_WINDOW) {
+    info.attempts = 1
+  } else {
+    info.attempts += 1
+  }
+  
+  info.lastAttempt = now
+  localStorage.setItem(RATE_LIMIT_STORAGE_KEY, JSON.stringify(info))
+  return info
+}
+
+const checkRateLimit = () => {
+  const info = getRateLimitInfo()
+  const now = Date.now()
+  
+  if (now - info.lastAttempt > RATE_LIMIT_WINDOW) {
+    return { allowed: true, remainingTime: 0 }
+  }
+  
+  if (info.attempts >= MAX_ATTEMPTS) {
+    const remainingTime = RATE_LIMIT_WINDOW - (now - info.lastAttempt)
+    return { allowed: false, remainingTime }
+  }
+  
+  return { allowed: true, remainingTime: 0 }
+}
 
 export const useAuth = () => {
   const dispatch = useDispatch()
@@ -114,25 +162,48 @@ export const useAuth = () => {
 
   const signUp = async ({ email, password, name, role }) => {
     try {
-      // First check if user already exists
-      const { data: existingUser } = await supabase.auth.getUser()
-      
-      // Check if email is already registered by attempting to get user info
-      const { data: signInAttempt, error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password: 'dummy-password-check'
-      })
-      
-      // If no error on email (but wrong password), user exists
-      if (signInError && signInError.message.includes('Invalid login credentials')) {
-        throw new Error('An account with this email already exists. Please log in instead.')
+      // Check rate limiting
+      const rateLimitCheck = checkRateLimit()
+      if (!rateLimitCheck.allowed) {
+        const minutes = Math.ceil(rateLimitCheck.remainingTime / (60 * 1000))
+        throw new Error(`Too many attempts. Please try again in ${minutes} minutes.`)
+      }
+
+      // Validate inputs
+      const emailValidation = validateEmail(email)
+      if (!emailValidation.isValid) {
+        throw new Error(emailValidation.errors[0])
+      }
+
+      const passwordValidation = validatePassword(password)
+      if (!passwordValidation.isValid) {
+        throw new Error(passwordValidation.errors[0])
+      }
+
+      if (!name || name.trim().length < 2) {
+        throw new Error('Please provide a valid full name')
+      }
+
+      // Check if user already exists by attempting sign in with a dummy password
+      try {
+        await supabase.auth.signInWithPassword({
+          email,
+          password: 'dummy-password-check-12345'
+        })
+      } catch (checkError) {
+        if (checkError.message.includes('Invalid login credentials')) {
+          // User exists but password is wrong - they should log in instead
+          throw new Error('An account with this email already exists. Please log in instead.')
+        }
+        // If error is something else, continue with signup
       }
       
       const { data, error } = await supabase.auth.signUp({
-        email, password,
+        email, 
+        password,
         options: { 
           data: { 
-            full_name: name,
+            full_name: name.trim(),
             role: role 
           },
           emailRedirectTo: `${window.location.origin}/auth-callback`
@@ -140,22 +211,31 @@ export const useAuth = () => {
       })
       
       if (error) {
-        if (error.message.includes('User already registered')) {
-          throw new Error('An account with this email already exists. Please log in instead.')
-        }
-        throw error
+        updateRateLimit()
+        
+        // Log error for debugging (without sensitive data)
+        console.error('Signup error:', formatErrorForLogging(error, { action: 'signup', email }))
+        
+        // Throw user-friendly error message
+        throw new Error(getAuthErrorMessage(error))
       }
 
+      // If signup was successful but user needs email verification
       if (data.user && !data.user.email_confirmed_at) {
-        // User needs to verify email
-        await supabase.from('profiles').upsert({
-          id: data.user.id,
-          email,
-          full_name: name,
-          role,
-          avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`,
-          created_at: new Date().toISOString(),
-        })
+        // Pre-create profile for better UX
+        try {
+          await supabase.from('profiles').upsert({
+            id: data.user.id,
+            email: email.toLowerCase(),
+            full_name: name.trim(),
+            role,
+            avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`,
+            created_at: new Date().toISOString(),
+          })
+        } catch (profileError) {
+          // Profile creation failed but signup succeeded - not critical
+          console.warn('Profile pre-creation failed:', profileError)
+        }
       }
       
       return data
@@ -166,31 +246,46 @@ export const useAuth = () => {
 
   const signIn = async ({ email, password }) => {
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+      // Check rate limiting
+      const rateLimitCheck = checkRateLimit()
+      if (!rateLimitCheck.allowed) {
+        const minutes = Math.ceil(rateLimitCheck.remainingTime / (60 * 1000))
+        throw new Error(`Too many attempts. Please try again in ${minutes} minutes.`)
+      }
+
+      // Basic validation
+      const emailValidation = validateEmail(email)
+      if (!emailValidation.isValid) {
+        throw new Error(emailValidation.errors[0])
+      }
+
+      if (!password) {
+        throw new Error('Password is required')
+      }
+
+      const { data, error } = await supabase.auth.signInWithPassword({ 
+        email: email.toLowerCase(), 
+        password 
+      })
       
       if (error) {
-        if (error.message.includes('Invalid login credentials') || error.message.includes('Email not confirmed')) {
-          // Check if user exists but email not verified
-          const { data: userData, error: userError } = await supabase.auth.signUp({
-            email,
-            password: 'dummy-check',
-            options: { emailRedirectTo: `${window.location.origin}/auth-callback` }
-          })
-          
-          if (userError && userError.message.includes('User already registered')) {
-            throw new Error('Please verify your email before logging in.')
-          } else if (userError && userError.message.includes('Invalid login credentials')) {
-            throw new Error('No account found with this email. Please sign up first.')
-          }
-        }
-        throw error
+        updateRateLimit()
+        
+        // Log error for debugging (without sensitive data)
+        console.error('Login error:', formatErrorForLogging(error, { action: 'login', email }))
+        
+        // Throw user-friendly error message
+        throw new Error(getAuthErrorMessage(error))
       }
       
       // Check if email is verified
       if (data.user && !data.user.email_confirmed_at) {
         await supabase.auth.signOut()
-        throw new Error('Please verify your email before logging in.')
+        throw new Error('Please verify your email before logging in. Check your inbox for the verification link.')
       }
+      
+      // Clear rate limiting on successful login
+      localStorage.removeItem(RATE_LIMIT_STORAGE_KEY)
       
       return data
     } catch (error) {
@@ -223,31 +318,76 @@ export const useAuth = () => {
   }
 
   const resetPassword = async (email) => {
-    const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`
-    })
-    if (error) throw error
-    return data
+    try {
+      // Validate email
+      const emailValidation = validateEmail(email)
+      if (!emailValidation.isValid) {
+        throw new Error(emailValidation.errors[0])
+      }
+
+      const { data, error } = await supabase.auth.resetPasswordForEmail(email.toLowerCase(), {
+        redirectTo: `${window.location.origin}/reset-password`
+      })
+      
+      if (error) {
+        console.error('Password reset error:', formatErrorForLogging(error, { action: 'password_reset', email }))
+        throw new Error(getAuthErrorMessage(error))
+      }
+      
+      return data
+    } catch (error) {
+      throw error
+    }
   }
 
   const updatePassword = async (newPassword) => {
-    const { data, error } = await supabase.auth.updateUser({
-      password: newPassword
-    })
-    if (error) throw error
-    return data
+    try {
+      // Validate new password
+      const passwordValidation = validatePassword(newPassword)
+      if (!passwordValidation.isValid) {
+        throw new Error(passwordValidation.errors[0])
+      }
+
+      const { data, error } = await supabase.auth.updateUser({
+        password: newPassword
+      })
+      
+      if (error) {
+        console.error('Password update error:', formatErrorForLogging(error, { action: 'password_update' }))
+        throw new Error(getAuthErrorMessage(error))
+      }
+      
+      return data
+    } catch (error) {
+      throw error
+    }
   }
 
   const resendVerification = async (email) => {
-    const { data, error } = await supabase.auth.resend({
-      type: 'signup',
-      email: email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth-callback`
+    try {
+      // Validate email
+      const emailValidation = validateEmail(email)
+      if (!emailValidation.isValid) {
+        throw new Error(emailValidation.errors[0])
       }
-    })
-    if (error) throw error
-    return data
+
+      const { data, error } = await supabase.auth.resend({
+        type: 'signup',
+        email: email.toLowerCase(),
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth-callback`
+        }
+      })
+      
+      if (error) {
+        console.error('Email verification resend error:', formatErrorForLogging(error, { action: 'resend_verification', email }))
+        throw new Error(getAuthErrorMessage(error))
+      }
+      
+      return data
+    } catch (error) {
+      throw error
+    }
   }
 
   const updateProfile = async (updates) => {
